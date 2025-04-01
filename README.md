@@ -32,9 +32,22 @@ pip install -r requirements.txt
 
 3. `.env`ファイルを作成し、OpenAI APIキーを設定します：
 
+```bash
+# echoコマンドを使用して.envファイルを作成する方法
+echo "OPENAI_API_KEY=your_api_key_here" > .env
+
+# または、以下のように追記することもできます
+echo "OPENAI_API_KEY=your_api_key_here" >> .env
+
+# 直接編集する場合
+touch .env
+# お好みのエディタで開いて編集
+# nano .env
+# vim .env
+# code .env
 ```
-OPENAI_API_KEY=your_api_key_here
-```
+
+APIキーは[OpenAIのダッシュボード](https://platform.openai.com/api-keys)から取得できます。
 
 ## 使い方
 
