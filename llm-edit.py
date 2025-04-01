@@ -6,10 +6,8 @@ from openai import OpenAI
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.prompt import Prompt
-# import difflib # If using diff display
-from typing import List, Dict, Union, Optional, Tuple, Any # Added Any for parsed_json flexibility
+from typing import List, Dict, Union, Optional, Tuple, Any
 
-# --- Settings ---
 load_dotenv()
 API_KEY = os.getenv("OPENAI_API_KEY")
 if not API_KEY:
@@ -20,7 +18,6 @@ MODEL = "gpt-4o-mini" # Or "gpt-4", "o1" etc.
 
 console = Console()
 
-# --- Prompt Template (Revised for Feedback Handling) ---
 SYSTEM_PROMPT_TEMPLATE = """
 あなたはテキストファイルを編集するアシスタントAIです。ユーザーは編集したいファイルの内容と編集指示を与えます。
 あなたはこれまでのユーザーとの会話履歴も参照できます。履歴には、過去のあなたの提案（JSON形式の場合あり）やそれに対するユーザーのフィードバックも含まれます。これらを理解し、文脈を踏まえて応答・提案してください。
@@ -97,13 +94,11 @@ SYSTEM_PROMPT_TEMPLATE = """
 必ず上記のいずれかのJSON形式で応答してください。
 """
 
-# --- Type Definitions ---
 Message = Dict[str, str]
 ConversationHistory = List[Message]
 EditOperation = Dict[str, str]
-AiResponse = Dict[str, Any] # Use Any for flexibility with potential future changes
+AiResponse = Dict[str, Any]
 
-# --- Functions ---
 
 def get_file_path() -> Path:
     """ユーザーから有効なファイルパスを取得する"""
@@ -135,14 +130,11 @@ def read_file(filepath: Path) -> Optional[str]:
 def determine_encoding(filepath: Path) -> str:
     """ファイルのエンコーディングを判別する (簡易版)"""
     try:
-        # Try reading with UTF-8 to see if it works without error
         filepath.read_text(encoding='utf-8')
         return 'utf-8'
     except UnicodeDecodeError:
-        # If UTF-8 fails, assume Shift-JIS (common alternative in Japan)
         return 'shift_jis'
     except Exception:
-        # Default to UTF-8 if other errors occur
         return 'utf-8'
 
 def write_file(filepath: Path, content: str, encoding: str) -> bool:
@@ -155,19 +147,18 @@ def write_file(filepath: Path, content: str, encoding: str) -> bool:
         return False
 
 def get_openai_response(
-    current_file_content: str, # Always the current content from the actual file
-    latest_user_content: str, # The very last user instruction or feedback
-    history: ConversationHistory, # History *before* the latest_user_content
-    is_feedback: bool, # Flag indicating if latest_user_content is feedback
-    previous_proposal: Optional[AiResponse] # The proposal being fed back on
+    current_file_content: str,
+    latest_user_content: str,
+    history: ConversationHistory,
+    is_feedback: bool,
+    previous_proposal: Optional[AiResponse]
 ) -> Optional[AiResponse]:
     """OpenAI APIを呼び出し、編集指示を解析する (フィードバック対応版)"""
     messages: ConversationHistory = [
         {"role": "system", "content": SYSTEM_PROMPT_TEMPLATE}
     ]
-    messages.extend(history) # Add historical context
+    messages.extend(history)
 
-    # Construct the final user message based on whether it's feedback
     last_user_message_combined = ""
     if is_feedback and previous_proposal:
         prev_status = previous_proposal.get("status")
@@ -176,15 +167,9 @@ def get_openai_response(
         if prev_status == "replace_all":
             editable_previous_content = previous_proposal.get("content")
         elif prev_status == "success":
-            # For 'success', the 'new_string' itself is the result of the edit.
-            # Providing just new_string might lack context.
-            # Let's provide the 'new_string' but instruct AI it's the result.
-            # A better approach might be to reconstruct the context, but it's complex.
-            # Let's try providing the new_string and rely on prompt.
-            editable_previous_content = previous_proposal.get("new_string") # Use new_string as the core content
+            editable_previous_content = previous_proposal.get("new_string")
 
         if editable_previous_content is not None and isinstance(editable_previous_content, str):
-             # If previous content is extractable (replace_all, success), tell AI to edit THAT content
              last_user_message_combined = f"""
 ## 【前回の提案内容 (編集対象)】:
 ---
@@ -195,8 +180,6 @@ def get_openai_response(
 会話履歴と上記のフィードバックに基づき、**【前回の提案内容 (編集対象)】を修正**して、新しい提案をJSON形式で応答してください。(元の提案形式: {prev_status})
 """
         else:
-             # If previous content not easily extractable (e.g., multiple_edits or error)
-             # Tell AI to edit the CURRENT file content, considering the previous proposal (in history) and feedback
              last_user_message_combined = f"""
 ## 【現在のファイル内容】:
 ---
@@ -207,8 +190,7 @@ def get_openai_response(
 
 会話履歴（特に直前のAI提案JSON）と上記のフィードバックに基づき、**【現在のファイル内容】を編集**して、新しい提案をJSON形式で応答してください。
 """
-    else: # Not feedback, or no previous proposal available
-        # Normal instruction based on current file content
+    else:
         last_user_message_combined = f"""
 ## 【現在のファイル内容】:
 ---
@@ -222,17 +204,13 @@ def get_openai_response(
     messages.append({"role": "user", "content": last_user_message_combined})
 
     try:
-        # console.print("[dim]DEBUG: Sending request to OpenAI...[/dim]") # Uncomment for debugging API calls
         response = client.chat.completions.create(
             model=MODEL,
             messages=messages, # type: ignore
             response_format={"type": "json_object"}
         )
         response_content = response.choices[0].message.content
-        # console.print(f"[dim]DEBUG: Received response content:\n{response_content}[/dim]") # Uncomment for debugging
-
         if response_content:
-            # Handle potential markdown code blocks more robustly
             processed_content = response_content.strip()
             if processed_content.startswith("```json"):
                 processed_content = processed_content[7:]
@@ -243,9 +221,7 @@ def get_openai_response(
                  if processed_content.endswith("```"):
                      processed_content = processed_content[:-3]
 
-            processed_content = processed_content.strip() # Ensure leading/trailing whitespace removed
-
-            # Attempt to parse the processed JSON string
+            processed_content = processed_content.strip()
             try:
                 parsed_json: AiResponse = json.loads(processed_content)
                 if isinstance(parsed_json, dict):
@@ -269,17 +245,8 @@ def get_openai_response(
             return None
     except Exception as e:
         console.print(f"[bold red]エラー: OpenAI APIの呼び出し中にエラーが発生しました: {e}[/]")
-        # Log the messages sent for easier debugging
-        # try:
-        #     import logging
-        #     logging.error("Error during OpenAI API call. Messages sent:", exc_info=True)
-        #     logging.error(json.dumps(messages, indent=2, ensure_ascii=False))
-        # except ImportError:
-        #     print("DEBUG: Error during OpenAI API call. Messages:", messages) # Fallback print
         return None
 
-
-# --- Confirmation & Apply Functions (Remain Mostly Unchanged) ---
 
 def ask_confirmation(prompt_message: str) -> str:
     """Asks 'y/n/feedback' and returns 'y', 'n', or feedback string."""
@@ -290,22 +257,18 @@ def ask_confirmation(prompt_message: str) -> str:
             return 'y'
         elif response_lower == 'n':
             return 'n'
-        elif response: # Any non-empty string other than y/n is feedback
+        elif response:
             return response
-        # Empty input loops to ask again
 
 def verify_and_apply_edit(
     filepath: Path, file_content: str, old_string: str, new_string: str, encoding: str
 ) -> Tuple[str, Optional[str]]:
-    """Verifies single edit, asks confirmation, applies if 'y'.
-    Returns: Tuple of ("applied"/"cancelled"/"error"/"feedback", message_for_history or feedback_string)
-    """
     try:
         count = file_content.count(old_string)
     except Exception as e:
         error_msg = f"変更元テキストの検索中にエラーが発生しました: {e}"
         console.print(f"[bold red]{error_msg}[/]")
-        console.print(f"[dim]検索対象:\n---\n{old_string!r}\n---[/dim]") # Use !r for raw representation
+        console.print(f"[dim]検索対象:\n---\n{old_string!r}\n---[/dim]")
         return "error", error_msg
 
     if count == 0:
@@ -318,13 +281,12 @@ def verify_and_apply_edit(
         console.print(f"[dim]検索対象:[/]\n---\n{old_string}\n---")
         user_choice_multi = ask_confirmation("最初の1箇所に適用しますか？ (y/n/フィードバックを入力)")
         if user_choice_multi == 'y':
-            pass # Proceed to apply to the first one
+            pass
         elif user_choice_multi == 'n':
              return "cancelled", "複数箇所ヒットのため編集はキャンセルされました。"
-        else: # Feedback
+        else:
              return "feedback", user_choice_multi
 
-    # Show proposal
     console.print("\n[bold green]以下の編集案が見つかりました:[/]")
     console.print("[bold red]- 変更前:[/]")
     console.print(f"{old_string}")
@@ -340,7 +302,6 @@ def verify_and_apply_edit(
                 history_msg = f"単一編集を適用: '{old_string[:30].strip()}...' -> '{new_string[:30].strip()}...'"
                 return "applied", history_msg
             else:
-                # write_file prints error
                 return "error", "ファイル書き込みエラーが発生しました。"
         except Exception as e:
             error_msg = f"ファイル内容の置換中にエラーが発生しました: {e}"
@@ -348,21 +309,17 @@ def verify_and_apply_edit(
             return "error", error_msg
     elif user_choice == 'n':
         return "cancelled", "編集はユーザーによってキャンセルされました。"
-    else: # Feedback
+    else:
         return "feedback", user_choice
 
 def verify_and_apply_multiple_edits(
     filepath: Path, file_content: str, edits: List[EditOperation], encoding: str
 ) -> Tuple[str, Optional[str]]:
-    """Verifies multiple edits, asks confirmation, applies if 'y'.
-    Returns: Tuple of ("applied"/"cancelled"/"error"/"feedback", message_for_history or feedback_string)
-    """
     validated_edits_with_indices = []
     problems = []
     overlapping_indices = set()
     temp_validation_content = file_content
 
-    # 1. Validate each edit (existence, uniqueness, overlap)
     for i, edit in enumerate(edits):
         old = edit.get("old_string")
         new = edit.get("new_string")
@@ -397,7 +354,6 @@ def verify_and_apply_multiple_edits(
         console.print("[yellow]編集は適用できません。AIに修正を依頼するか、指示をより具体的にしてください。[/]")
         return "error", "複数編集の検証エラーが発生しました。上記詳細を確認してください。"
 
-    # 2. Show proposals (sorted by appearance)
     console.print("\n[bold green]以下の複数の編集案が見つかりました:[/]")
     validated_edits_with_indices.sort(key=lambda item: item["start"])
     for i, edit_info in enumerate(validated_edits_with_indices):
@@ -407,11 +363,9 @@ def verify_and_apply_multiple_edits(
         console.print("[bold blue]+ 変更後:[/]")
         console.print(f"{edit_info['new']}")
 
-    # 3. Ask confirmation
     user_choice = ask_confirmation("\nこれらの編集をすべて適用しますか？ (y/n/フィードバックを入力)")
 
     if user_choice == 'y':
-        # 4. Apply edits
         try:
             new_content_parts = []
             last_index = 0
@@ -444,13 +398,9 @@ def verify_and_apply_multiple_edits(
 def handle_replace_all_confirmation(
     filepath: Path, current_content: str, new_content_full: str, encoding: str
 ) -> Tuple[str, Optional[str]]:
-    """Shows replace_all proposal, asks confirmation, applies if 'y'.
-    Returns: Tuple of ("applied"/"cancelled"/"error"/"feedback", message_for_history or feedback_string)
-    """
     console.print("\n[bold green]AIによるファイル全体の書き換え案:[/]")
     console.print(f"元の内容 約{len(current_content)}文字 -> 新しい内容 約{len(new_content_full)}文字")
 
-    # Show the proposed new content
     console.print("[bold blue]--- 新しい内容 ---[/]")
     console.print(new_content_full)
     console.print("[bold blue]--- 新しい内容終 ---[/]")
@@ -468,8 +418,6 @@ def handle_replace_all_confirmation(
     else: # Feedback
         return "feedback", user_choice
 
-
-# --- Main Processing Logic (Revised with State and Improved Feedback Context) ---
 if __name__ == "__main__":
     console.print("[bold magenta]AIテキスト編集チャットへようこそ！[/]")
     filepath = get_file_path()
@@ -477,15 +425,14 @@ if __name__ == "__main__":
     console.print(f"[green]編集対象ファイル: {filepath} (エンコーディング: {file_encoding})[/]")
 
     conversation_history: ConversationHistory = []
-    state = "get_instruction" # Initial state: "get_instruction" or "process_feedback"
-    user_input = "" # Holds the current instruction or feedback text
-    last_ai_proposal: Optional[AiResponse] = None # Stores the AI proposal being reviewed
+    state = "get_instruction"
+    user_input = ""
+    last_ai_proposal: Optional[AiResponse] = None
 
     while True:
         console.rule()
-        latest_user_content_for_api = "" # Content to be sent to API this turn
+        latest_user_content_for_api = ""
 
-        # 1. Get User Input or Use Feedback based on state
         if state == "get_instruction":
             user_input = Prompt.ask(f"[bold yellow]{filepath.name}>[/]", default="")
 
@@ -508,75 +455,57 @@ if __name__ == "__main__":
                     console.print("[red]ファイル内容の表示に失敗しました。[/red]")
                 continue
 
-            # Valid instruction, set it for API call
             latest_user_content_for_api = user_input
-            # Add user instruction to history *before* API call
             conversation_history.append({"role": "user", "content": latest_user_content_for_api})
             console.print("[dim]AIが考えています...[/]")
 
         elif state == "process_feedback":
-            # Feedback text is already in user_input from the previous iteration's confirmation step
             console.print("[dim]フィードバックを元にAIが再考しています...[/]")
 
-            # Add the *previous AI proposal* (as JSON string) to history for context
             if last_ai_proposal:
                 try:
-                    # Ensure ensure_ascii=False for correct non-ASCII char handling
                     proposal_json = json.dumps(last_ai_proposal, ensure_ascii=False)
                     conversation_history.append({"role": "assistant", "content": proposal_json})
                 except Exception as e:
                     console.print(f"[yellow]警告: 前回のAI提案を履歴に追加中にエラー: {e}[/yellow]")
 
-            # Add the user's feedback (already in user_input) to history
             conversation_history.append({"role": "user", "content": user_input})
-            latest_user_content_for_api = user_input # Feedback becomes the latest content for API
+            latest_user_content_for_api = user_input
 
-        # --- History Management ---
-        MAX_HISTORY_PAIRS = 10 # User-Assistant pairs
+        MAX_HISTORY_PAIRS = 10
         if len(conversation_history) > MAX_HISTORY_PAIRS * 2:
-            # Keep the latest N pairs (simple truncation from the beginning)
             history_cutoff = len(conversation_history) - (MAX_HISTORY_PAIRS * 2)
             conversation_history = conversation_history[history_cutoff:]
 
-        # 2. Read Current File Content & Call API
         current_content = read_file(filepath)
         if current_content is None:
-            # Failed to read file. Pop last user message if added.
             if conversation_history and conversation_history[-1].get("role") == "user":
                  conversation_history.pop()
                  if state == "process_feedback" and conversation_history and conversation_history[-1].get("role") == "assistant":
-                     conversation_history.pop() # Also pop assistant proposal if feedback failed early
+                     conversation_history.pop()
             state = "get_instruction"
             continue
 
-        # Determine if it's feedback mode for the API call context
         is_feedback_call = (state == "process_feedback")
 
-        # Call the modified get_openai_response
         ai_response = get_openai_response(
-            current_file_content=current_content, # Always pass current file content
-            latest_user_content=latest_user_content_for_api, # Instruction or feedback text
-            history=conversation_history[:-1] if conversation_history else [], # History before the latest user msg
+            current_file_content=current_content,
+            latest_user_content=latest_user_content_for_api,
+            history=conversation_history[:-1] if conversation_history else [],
             is_feedback=is_feedback_call,
-            previous_proposal=last_ai_proposal if is_feedback_call else None # Pass the proposal being reviewed
+            previous_proposal=last_ai_proposal if is_feedback_call else None
         )
 
-        # Update last_ai_proposal only if the API call was successful
         if ai_response:
             last_ai_proposal = ai_response
         else:
-            # API call failed, don't update last_ai_proposal (keep the one that was potentially being reviewed)
-            # But we need to handle the state transition after failure
-            pass # State transition handled below in error processing
+            pass
 
-
-        # 3. Process API Response
         if ai_response:
             status = ai_response.get("status")
-            action_result = None # "applied", "cancelled", "error", "feedback"
-            feedback_or_history_msg = None # Feedback string or message for history
+            action_result = None
+            feedback_or_history_msg = None
 
-            # --- Handle Edit Proposals ---
             if status == "success":
                 old = ai_response.get("old_string")
                 new = ai_response.get("new_string")
@@ -591,7 +520,6 @@ if __name__ == "__main__":
             elif status == "multiple_edits":
                 edits = ai_response.get("edits")
                 if edits and isinstance(edits, list):
-                    # Basic validation of edit items
                     valid_edits = [e for e in edits if isinstance(e, dict) and isinstance(e.get("old_string"), str) and isinstance(e.get("new_string"), str)]
                     if len(valid_edits) == len(edits):
                          action_result, feedback_or_history_msg = verify_and_apply_multiple_edits(
@@ -614,59 +542,42 @@ if __name__ == "__main__":
                     action_result, feedback_or_history_msg = "error", "AI応答の形式不備 (replace_all: contentキーがない、または文字列ではない)"
                     console.print(f"[bold red]{feedback_or_history_msg}[/]")
 
-            # --- Handle Non-Proposal Messages ---
             elif status in ["clarification_needed", "conversation", "rejected"]:
                 message = ai_response.get('message', f'AIからのメッセージ ({status})')
                 color = "yellow" if status == "clarification_needed" else "blue" if status == "conversation" else "red"
                 console.print(f"[bold {color}]AI:[/][{color}] {message}[/]")
-                # Add AI message to history, then wait for next instruction
                 conversation_history.append({"role": "assistant", "content": message})
                 state = "get_instruction"
 
-            # --- Handle Unknown Status ---
             else:
                 message = f"エラー: AIから不明なステータス ('{status}') が返されました。"
                 console.print(f"[bold red]{message}[/]")
                 console.print(f"応答全体: {ai_response}")
-                # Add error message to history? Or just reset? Reset seems safer.
                 if conversation_history and conversation_history[-1].get("role") == "user":
-                     conversation_history.pop() # Remove the problematic user input
+                     conversation_history.pop()
                 state = "get_instruction"
 
-            # --- Process Action Result (only for proposals: success, multiple_edits, replace_all) ---
             if action_result:
                 if action_result == "applied":
-                    # Message printed by apply func. Add summary to history.
                     if feedback_or_history_msg:
                          conversation_history.append({"role": "assistant", "content": feedback_or_history_msg})
-                    state = "get_instruction" # Get next instruction
+                    state = "get_instruction"
                 elif action_result == "cancelled":
-                    # Message printed. Add summary to history.
                     if feedback_or_history_msg:
                          conversation_history.append({"role": "assistant", "content": feedback_or_history_msg})
-                    state = "get_instruction" # Get next instruction
+                    state = "get_instruction"
                 elif action_result == "error":
-                    # Error already printed. Add error summary to history.
                     error_summary = f"エラー発生: {feedback_or_history_msg}" if feedback_or_history_msg else "提案処理中にエラーが発生しました。"
                     conversation_history.append({"role": "assistant", "content": error_summary})
-                    # Pop user input that led to error? Maybe not, keep context? Let's keep it.
-                    state = "get_instruction" # Get next instruction after error
+                    state = "get_instruction"
                 elif action_result == "feedback":
-                    # Feedback string is in feedback_or_history_msg
-                    user_input = feedback_or_history_msg or "" # Store feedback for next loop's input
-                    state = "process_feedback" # Next loop will handle this feedback
-                    # History (proposal JSON + feedback text) is added at the START of the next loop iteration.
-                else: # Should not happen
+                    user_input = feedback_or_history_msg or ""
+                    state = "process_feedback"
+                else:
                     console.print(f"[bold red]内部エラー: 不明なアクション結果 '{action_result}'[/]")
-                    state = "get_instruction" # Reset state on internal error
+                    state = "get_instruction"
 
-        # --- Handle API Call Failure ---
         else:
-            # Error message already printed by get_openai_response
-            # Pop the user request that failed
             if conversation_history and conversation_history[-1].get("role") == "user":
                 conversation_history.pop()
-            # Do not clear last_ai_proposal here, user might want to retry or give feedback on the previous successful one if applicable
-            state = "get_instruction" # Go back to getting instruction after API failure
-
-# End of while loop
+            state = "get_instruction"
